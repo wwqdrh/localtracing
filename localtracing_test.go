@@ -34,7 +34,6 @@ func TestGinMiddleware(t *testing.T) {
 		}()
 	}
 	wait.Wait()
-	Close()
 }
 
 func TestGinRegister(t *testing.T) {
@@ -60,7 +59,6 @@ func TestGinRegister(t *testing.T) {
 		}()
 	}
 	wait.Wait()
-	Close()
 }
 
 func handleA() {

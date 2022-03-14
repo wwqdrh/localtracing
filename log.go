@@ -1,30 +1,85 @@
 package localtracing
 
 import (
-	"io"
-	"log"
 	"os"
 	"path"
 	"time"
+
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
-	Trace   *log.Logger
-	logFile *os.File
+	traceLogger *zap.Logger
 )
 
-func NewTracingLog(logPath string) {
-	os.MkdirAll(logPath, 0666)
-
-	var err error
-	logFile, err = os.OpenFile(path.Join(logPath, "debug.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalln("Failed to open error log file: ", err)
+func NewTracingLog(logDir string) error {
+	if ok, _ := PathExists(logDir); !ok {
+		_ = os.MkdirAll(logDir, os.ModePerm)
 	}
-	// defer file.Close()
+	logPath := path.Join(logDir, "trace.log")
 
-	Trace = log.New(io.MultiWriter(logFile), "TRACING: ",
-		log.Ldate|log.Ltime|log.Lshortfile)
+	// 日志级别
+	infoPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
+		return lev == zap.InfoLevel
+	})
+
+	// 日志config
+	encoderConfig := zapcore.EncoderConfig{
+		TimeKey:  "time",
+		LevelKey: "level",
+		NameKey:  "logger",
+		// CallerKey:      "linenum",
+		MessageKey: "msg",
+		// StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,  // 小写编码器
+		EncodeTime:     zapcore.ISO8601TimeEncoder,     // ISO8601 UTC 时间格式
+		EncodeDuration: zapcore.SecondsDurationEncoder, //
+		EncodeCaller:   zapcore.FullCallerEncoder,      // 全路径编码器
+		EncodeName:     zapcore.FullNameEncoder,
+	}
+
+	// lumberjack rotate
+	// writer := zapcore.AddSync(&lumberjack.Logger{
+	// 	Filename:   fmt.Sprintf("./%s/server_info.log", logPath), // 日志文件的位置
+	// 	MaxSize:    10,                                           // 在进行切割之前，日志文件的最大大小（以MB为单位）
+	// 	MaxBackups: 200,                                          // 保留旧文件的最大个数
+	// 	MaxAge:     30,                                           // 保留旧文件的最大天数
+	// 	Compress:   true,                                         // 是否压缩/归档旧文件
+	// })
+
+	/* 日志轮转相关函数
+	`WithLinkName` 为最新的日志建立软连接
+	`WithRotationTime` 设置日志分割的时间，隔多久分割一次
+	WithMaxAge 和 WithRotationCount二者只能设置一个
+	  `WithMaxAge` 设置文件清理前的最长保存时间
+	  `WithRotationCount` 设置文件清理前最多保存的个数
+	*/
+	// rotatelogs.New
+	// 下面配置日志每隔 四小时 轮转一个新文件，保留最近 7天的日志文件，多余的自动清理掉。
+	writer, err := rotatelogs.New(
+		logPath+".%Y%m%d%H",
+		rotatelogs.WithLinkName(logPath),
+		rotatelogs.WithMaxAge(time.Duration(24*7)*time.Hour),
+		rotatelogs.WithRotationTime(time.Duration(4)*time.Hour),
+	)
+	if err != nil {
+		return err
+	}
+
+	traceLogger = zap.New(
+		zapcore.NewTee(
+			zapcore.NewCore(
+				zapcore.NewJSONEncoder(encoderConfig),
+				zapcore.AddSync(writer), infoPriority,
+			),
+		),
+		zap.AddCaller(),
+	)
+
+	return nil
 }
 
 func TracingTime(funcName string) func() {
@@ -36,12 +91,16 @@ func TracingTime(funcName string) func() {
 	}
 
 	now := time.Now()
-	Trace.Println(tracingID, funcName, "开始执行时间", time.Now().Format("2006-01-02 15:05:06"))
-	return func() {
-		Trace.Println(tracingID, funcName, "结束执行时间", time.Now().Format("2006-01-02 15:05:06"), "耗时", time.Since(now))
-	}
-}
+	traceLogger.Info("任务开始",
+		zap.String("traceid", tracingID),
+		zap.Int64("start_time", time.Now().UnixMicro()),
+	)
 
-func Close() {
-	logFile.Close()
+	return func() {
+		traceLogger.Info("任务结束",
+			zap.String("traceid", tracingID),
+			zap.Int64("end_time", time.Now().Unix()),
+			zap.String("duration", time.Since(now).String()),
+		)
+	}
 }

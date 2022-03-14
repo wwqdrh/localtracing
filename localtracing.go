@@ -14,7 +14,7 @@ func Register(r *gin.Engine, tracingPath string) {
 
 func TracingMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		addContext(GenTracingID(16))
+		addContext(GenTracingID(2))
 		ctx.Next()
 	}
 }

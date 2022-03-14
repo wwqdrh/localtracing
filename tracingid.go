@@ -6,13 +6,12 @@ import (
 )
 
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const numbers = "0123456789"
 
 func GenTracingID(n int) string {
 	rand.Seed(time.Now().UnixNano())
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(numbers))]
+		b[i] = letters[rand.Intn(len(letters))]
 	}
-	return string(b)
+	return time.Now().Format("20060102150405") + "-" + string(b)
 }
