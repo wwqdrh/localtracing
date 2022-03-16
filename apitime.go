@@ -3,9 +3,12 @@ package localtracing
 import (
 	"container/heap"
 	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 var ApiMapping sync.Map = sync.Map{} // map[string]*ApiTimeParse
@@ -23,6 +26,14 @@ type (
 		totalTime  int   // mill 毫秒
 		bigQueue   queue // 小顶堆 存正数
 		smallQueue queue // 大顶堆 存负数
+	}
+
+	ApiMemoInfo struct {
+		minSize    int64
+		maxSize    int64
+		bigQSize   int64
+		smallQSize int64
+		Total      int64
 	}
 )
 
@@ -130,6 +141,28 @@ func (p *ApiTimeParse) AvgVal() float64 {
 	return float64(p.totalTime) / float64(p.totalCnt)
 }
 
+func (p *ApiTimeParse) GetMemory() *ApiMemoInfo {
+	minSizeStr := fmt.Sprint(unsafe.Sizeof(p.minVal))
+	maxSizeStr := fmt.Sprint(unsafe.Sizeof(p.maxVal))
+	bigQSizeStr := fmt.Sprint(uintptr(len(p.bigQueue.IntSlice)) * reflect.TypeOf(p.bigQueue.IntSlice).Elem().Size())
+	smallQSizeStr := fmt.Sprint(uintptr(len(p.smallQueue.IntSlice)) * reflect.TypeOf(p.smallQueue.IntSlice).Elem().Size())
+
+	minSize, _ := strconv.ParseInt(minSizeStr, 10, 64)
+	maxSize, _ := strconv.ParseInt(maxSizeStr, 10, 64)
+	bigQSize, _ := strconv.ParseInt(bigQSizeStr, 10, 64)
+	smallQSize, _ := strconv.ParseInt(smallQSizeStr, 10, 64)
+
+	return &ApiMemoInfo{
+		minSize: minSize,
+		maxSize: maxSize,
+		// bigQSize:   fmt.Sprint(unsafe.Sizeof(p.bigQueue)),
+		bigQSize: bigQSize,
+		// smallQSize: fmt.Sprint(unsafe.Sizeof(p.smallQueue)),
+		smallQSize: smallQSize,
+		Total:      minSize + maxSize + bigQSize + smallQSize,
+	}
+}
+
 // 求解api执行的情况
 func ApiTime(fnName string) func() {
 	ApiMapping.LoadOrStore(fnName, NewApiTimeParse())
@@ -147,6 +180,8 @@ func ApiTime(fnName string) func() {
 func ApiParseInfo(fnName string) {
 	if v, ok := ApiMapping.Load(fnName); ok {
 		val := v.(*ApiTimeParse)
+		info := val.GetMemory()
+		fmt.Printf("[%s]当前内存状态: 总值: %dbyte", fnName, info.Total*8)
 		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f\n", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal())
 	}
 }
