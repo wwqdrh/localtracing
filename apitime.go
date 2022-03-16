@@ -18,6 +18,12 @@ type (
 		sort.IntSlice
 	}
 
+	ApiTp struct {
+		left  int
+		right int
+		cnt   int
+	}
+
 	ApiTimeParse struct {
 		mu         sync.RWMutex
 		minVal     int
@@ -26,6 +32,7 @@ type (
 		totalTime  int   // mill 毫秒
 		bigQueue   queue // 小顶堆 存正数
 		smallQueue queue // 大顶堆 存负数
+		tpBucket   []*ApiTp
 	}
 
 	ApiMemoInfo struct {
@@ -51,12 +58,25 @@ func (h *queue) Pop() interface{} {
 }
 
 func NewApiTimeParse() *ApiTimeParse {
+	// 构造tpbucket
+	buckets := []*ApiTp{}
+	pre := 0
+	for cur := 1; cur < 100000; cur = cur << 1 {
+		buckets = append(buckets, &ApiTp{
+			left:  pre,
+			right: cur,
+			cnt:   0,
+		})
+		pre = cur
+	}
+
 	return &ApiTimeParse{
 		mu:         sync.RWMutex{},
 		minVal:     1<<31 - 1,
 		maxVal:     -1 << 31,
 		bigQueue:   queue{},
 		smallQueue: queue{},
+		tpBucket:   buckets,
 	}
 }
 
@@ -73,6 +93,29 @@ func (p *ApiTimeParse) Add(val int) {
 	}
 	p.totalCnt++
 	p.totalTime += val
+
+	// tpbuckets计数
+	left, right := 0, len(p.tpBucket)-1
+	flag := false
+	for left < right {
+		if flag {
+			break
+		}
+		if left+1 == right {
+			flag = true
+		}
+		mid := left + (right-left)/2
+		if val > p.tpBucket[mid].right {
+			left = mid + 1
+		} else if val > p.tpBucket[mid].left {
+			left = mid
+		} else if val < p.tpBucket[mid].left {
+			right = mid - 1
+		} else if val < p.tpBucket[mid].right {
+			right = mid
+		}
+	}
+	p.tpBucket[left].cnt++
 
 	// 如果两边长度一样 调整结构 让左边多1
 	if len(p.bigQueue.IntSlice) == len(p.smallQueue.IntSlice) {
@@ -141,6 +184,18 @@ func (p *ApiTimeParse) AvgVal() float64 {
 	return float64(p.totalTime) / float64(p.totalCnt)
 }
 
+// tp99值
+func (p *ApiTimeParse) Tp99Val() float64 {
+	v := p.totalCnt * 99 / 100
+	for i := 0; i < len(p.tpBucket); i++ {
+		if v-p.tpBucket[i].cnt < 0 {
+			return float64(p.tpBucket[i].left)
+		}
+		v -= p.tpBucket[i].cnt
+	}
+	return float64(p.tpBucket[len(p.tpBucket)-1].right)
+}
+
 func (p *ApiTimeParse) GetMemory() *ApiMemoInfo {
 	minSizeStr := fmt.Sprint(unsafe.Sizeof(p.minVal))
 	maxSizeStr := fmt.Sprint(unsafe.Sizeof(p.maxVal))
@@ -182,6 +237,6 @@ func ApiParseInfo(fnName string) {
 		val := v.(*ApiTimeParse)
 		info := val.GetMemory()
 		fmt.Printf("[%s]当前内存状态: 总值: %dbyte", fnName, info.Total*8)
-		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f\n", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal())
+		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f\n, TP99: %.2f", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal(), val.Tp99Val())
 	}
 }

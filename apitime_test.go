@@ -26,6 +26,13 @@ func TestTimeParse(t *testing.T) {
 }
 
 // 假设一秒所有的接口调用共有10次，一天有864000
+// 10w: [testapifn]当前内存状态: 总值: 6400128byte[testapifn]执行情况: 最小值: 0, 最大值: 2999, 中位数: 1498.00, 平均数: 1498.22
+// 20w: [testapifn]当前内存状态: 总值: 12800128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1501.00, 平均数: 1500.75
+// 30w: [testapifn]当前内存状态: 总值: 19200128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1502.00, 平均数: 1501.14
+// 40w: [testapifn]当前内存状态: 总值: 25600128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1497.50, 平均数: 1499.83
+// 50w: [testapifn]当前内存状态: 总值: 32000128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1502.00, 平均数: 1500.94
+// 70w: [testapifn]当前内存状态: 总值: 44800128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1504.50, 平均数: 1502.40
+// 86.4w: [testapifn]当前内存状态: 总值: 55296128byte[testapifn]执行情况: 最小值: 0, 最大值: 3000, 中位数: 1503.00, 平均数: 1502.32
 func TestApiTime(t *testing.T) {
 	var fn = func(w *sync.WaitGroup) {
 		defer w.Done()
