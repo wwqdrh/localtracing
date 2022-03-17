@@ -2,8 +2,11 @@ package localtracing
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +24,13 @@ type (
 
 	ApiTimeParse struct {
 		mu        sync.RWMutex
+		chMu      chan bool
+		freeQueue *EsQueue
+		cCtx      context.Context
+		cCancel   context.CancelFunc
+		DoneSigle chan bool
+		doTime    int64
+		putTime   int64 // 用于统计是否执行完了
 		minVal    int
 		maxVal    int
 		totalCnt  int
@@ -40,6 +50,8 @@ type (
 		Total      int64
 		DiskTotaal int64
 	}
+
+	FreeLockFn func()
 )
 
 func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
@@ -72,8 +84,17 @@ func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
 		return nil, err
 	}
 
+	chMu := make(chan bool, 1)
+	chMu <- true // 首次启动
+	ctx, cancel := context.WithCancel(context.TODO())
+
 	return &ApiTimeParse{
 		mu:         sync.RWMutex{},
+		chMu:       chMu,
+		freeQueue:  NewQueue(10000),
+		cCtx:       ctx,
+		cCancel:    cancel,
+		DoneSigle:  make(chan bool, 1),
 		minVal:     1<<31 - 1,
 		maxVal:     -1 << 31,
 		bigQueue:   big,
@@ -82,12 +103,86 @@ func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
 	}, nil
 }
 
+func (p *ApiTimeParse) Clean() {
+	p.freeQueue.cache = p.freeQueue.cache[:0]
+	p.freeQueue = nil
+	p.bigQueue = nil
+	p.smallQueue = nil
+	p.tpBucket = p.tpBucket[:0]
+}
+
+// StartDo 额外线程处理add函数
+func (p *ApiTimeParse) StartFn() {
+	defer func() {
+		fmt.Println("该协程退出")
+	}()
+
+	for {
+		select {
+		case <-p.cCtx.Done():
+			return
+		default:
+			if atomic.LoadInt64(&p.doTime) <= atomic.LoadInt64(&p.putTime) {
+				if atomic.LoadInt64(&p.doTime) == atomic.LoadInt64(&p.putTime) {
+					// 如果都是0则一直等待
+					time.Sleep(100 * time.Millisecond) // 等待100毫秒如果还没有新的数据要处理
+					if atomic.LoadInt64(&p.putTime) == 0 {
+						continue
+					} else if atomic.LoadInt64(&p.doTime) == atomic.LoadInt64(&p.putTime) {
+						p.DoneSigle <- true
+					}
+				}
+				val, ok, _ := p.freeQueue.Get()
+				if !ok {
+					fmt.Printf("Get.Fail\n")
+					runtime.Gosched()
+				} else {
+					fn, ok := val.(FreeLockFn)
+					if !ok {
+						fmt.Println("类型不对")
+					} else {
+						fn()
+					}
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (p *ApiTimeParse) AddFn(val int) {
+	var c FreeLockFn = func() {
+		p.Add(val)
+	}
+
+	ok, _ := p.freeQueue.Put(c)
+
+	for !ok {
+		time.Sleep(time.Microsecond)
+		ok, _ = p.freeQueue.Put(c)
+	}
+
+	atomic.AddInt64(&p.putTime, 1)
+}
+
 // 添加新的数据
+// 1、使用锁
+// 2、使用通道代替锁
+// 3、使用无锁队列: Apitime将add加入到无锁队列中，另起一个协程来获取无锁队列中的数据，有数据了就执行
 func (p *ApiTimeParse) Add(val int) {
+	defer func() {
+		atomic.AddInt64(&p.doTime, 1)
+	}()
+
 	defer DefaultTimer.Time("Add")()
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// f := DefaultTimer.Time("Add通道锁")
+	// <-p.chMu
+	// defer func() { p.chMu <- true }()
+	// f()
+
+	// p.mu.Lock()
+	// defer p.mu.Unlock()
 
 	if val < p.minVal {
 		p.minVal = val
@@ -211,22 +306,33 @@ func (p *ApiTimeParse) Tp99Val() float64 {
 }
 
 // 求解api执行的情况
+// 如果
 func ApiTime(fnName string, strage ApiTimeHeapBuilder) func() {
-	f1 := DefaultTimer.Time("ApiTime1")
 	if p, err := NewApiTimeParse(strage); err != nil {
 		return func() {}
 	} else {
-		ApiMapping.LoadOrStore(fnName, p)
+		if _, loaded := ApiMapping.LoadOrStore(fnName, p); loaded {
+			p.Clean()
+		} else {
+			go p.StartFn()
+		}
 	}
-	f1()
 
 	start := time.Now()
 	return func() {
-		defer DefaultTimer.Time("ApiTime2")()
+		defer DefaultTimer.Time("ApiTime添加计数时的消耗")()
 		durat := time.Since(start).Milliseconds()
 		if val, ok := ApiMapping.Load(fnName); ok {
-			val.(*ApiTimeParse).Add(int(durat))
+			val.(*ApiTimeParse).AddFn(int(durat))
 		}
+	}
+}
+
+func GetApiParse(fnName string) *ApiTimeParse {
+	if v, ok := ApiMapping.Load(fnName); !ok {
+		return nil
+	} else {
+		return v.(*ApiTimeParse)
 	}
 }
 

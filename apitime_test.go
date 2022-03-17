@@ -175,10 +175,17 @@ func TestDiskApiTime(t *testing.T) {
 		go fn(&wait)
 	}
 	wait.Wait()
+	// 等待所有的消费者执行完成
+	p := GetApiParse("testapifn")
+	if p == nil {
+		t.Error("获取apiparse错误")
+	}
+	<-p.DoneSigle
 	fmt.Print("0.1w: ")
 	fmt.Printf("执行耗时:%.2f", time.Since(step).Seconds())
 	ApiParseInfo("testapifn")
 	DefaultTimer.AllInfo()
+
 	// 10w
 	step = time.Now()
 	wait = sync.WaitGroup{}
@@ -187,6 +194,11 @@ func TestDiskApiTime(t *testing.T) {
 		go fn(&wait)
 	}
 	wait.Wait()
+	p = GetApiParse("testapifn")
+	if p == nil {
+		t.Error("获取apiparse错误")
+	}
+	<-p.DoneSigle
 	fmt.Print("10w: ")
 	fmt.Printf("执行耗时:%.2f", time.Since(step).Seconds())
 	ApiParseInfo("testapifn")
