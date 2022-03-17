@@ -3,21 +3,16 @@ package localtracing
 import (
 	"container/heap"
 	"fmt"
-	"reflect"
-	"sort"
-	"strconv"
 	"sync"
 	"time"
-	"unsafe"
 )
 
-var ApiMapping sync.Map = sync.Map{} // map[string]*ApiTimeParse
+var (
+	DefaultStrage ApiTimeHeapBuilder = NewDiskHeap
+	ApiMapping    sync.Map           = sync.Map{} // map[string]*ApiTimeParse
+)
 
 type (
-	queue struct {
-		sort.IntSlice
-	}
-
 	ApiTp struct {
 		left  int
 		right int
@@ -25,13 +20,15 @@ type (
 	}
 
 	ApiTimeParse struct {
-		mu         sync.RWMutex
-		minVal     int
-		maxVal     int
-		totalCnt   int
-		totalTime  int   // mill 毫秒
-		bigQueue   queue // 小顶堆 存正数
-		smallQueue queue // 大顶堆 存负数
+		mu        sync.RWMutex
+		minVal    int
+		maxVal    int
+		totalCnt  int
+		totalTime int // mill 毫秒
+		// bigQueue   queue // 小顶堆 存正数
+		// smallQueue queue // 大顶堆 存负数
+		bigQueue   ApiTimeHeapInterface
+		smallQueue ApiTimeHeapInterface
 		tpBucket   []*ApiTp
 	}
 
@@ -41,23 +38,18 @@ type (
 		bigQSize   int64
 		smallQSize int64
 		Total      int64
+		DiskTotaal int64
 	}
 )
 
-func (h *queue) Top() interface{} {
-	if len(h.IntSlice) == 0 {
-		return nil
+func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
+	var starge ApiTimeHeapBuilder
+	if len(strages) == 0 {
+		starge = DefaultStrage
+	} else {
+		starge = strages[0]
 	}
-	return h.IntSlice[0]
-}
-func (h *queue) Push(val interface{}) { h.IntSlice = append(h.IntSlice, val.(int)) }
-func (h *queue) Pop() interface{} {
-	res := h.IntSlice[len(h.IntSlice)-1]
-	h.IntSlice = h.IntSlice[:len(h.IntSlice)-1]
-	return res
-}
 
-func NewApiTimeParse() *ApiTimeParse {
 	// 构造tpbucket
 	buckets := []*ApiTp{}
 	pre := 0
@@ -70,18 +62,30 @@ func NewApiTimeParse() *ApiTimeParse {
 		pre = cur
 	}
 
+	big, err := starge("./temp/heap", "apitime", "bigQueue")
+	if err != nil {
+		return nil, err
+	}
+
+	small, err := starge("./temp/heap", "apitime", "smallQueue")
+	if err != nil {
+		return nil, err
+	}
+
 	return &ApiTimeParse{
 		mu:         sync.RWMutex{},
 		minVal:     1<<31 - 1,
 		maxVal:     -1 << 31,
-		bigQueue:   queue{},
-		smallQueue: queue{},
+		bigQueue:   big,
+		smallQueue: small,
 		tpBucket:   buckets,
-	}
+	}, nil
 }
 
 // 添加新的数据
 func (p *ApiTimeParse) Add(val int) {
+	defer DefaultTimer.Time("Add")()
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -95,6 +99,7 @@ func (p *ApiTimeParse) Add(val int) {
 	p.totalTime += val
 
 	// tpbuckets计数
+	t1 := DefaultTimer.Time("Add桶计数")
 	left, right := 0, len(p.tpBucket)-1
 	flag := false
 	for left < right {
@@ -116,26 +121,29 @@ func (p *ApiTimeParse) Add(val int) {
 		}
 	}
 	p.tpBucket[left].cnt++
+	t1()
 
 	// 如果两边长度一样 调整结构 让左边多1
-	if len(p.bigQueue.IntSlice) == len(p.smallQueue.IntSlice) {
-		if len(p.bigQueue.IntSlice) == 0 {
-			heap.Push(&p.smallQueue, -val)
+	t2 := DefaultTimer.Time("Add对顶堆重排序")
+	defer t2()
+	if p.bigQueue.Len() == p.smallQueue.Len() {
+		if p.bigQueue.Len() == 0 {
+			heap.Push(p.smallQueue, -val)
 			return
 		}
 
-		if val <= p.bigQueue.IntSlice[0] {
-			heap.Push(&p.smallQueue, -val)
+		if val <= p.bigQueue.Top().(int) {
+			heap.Push(p.smallQueue, -val)
 		} else {
-			heap.Push(&p.smallQueue, -heap.Pop(&p.bigQueue).(int))
-			heap.Push(&p.bigQueue, val)
+			heap.Push(p.smallQueue, -heap.Pop(p.bigQueue).(int))
+			heap.Push(p.bigQueue, val)
 		}
-	} else if len(p.smallQueue.IntSlice) > len(p.bigQueue.IntSlice) {
-		if val >= p.smallQueue.IntSlice[0] {
-			heap.Push(&p.bigQueue, val)
+	} else if p.smallQueue.Len() > p.bigQueue.Len() {
+		if val >= p.smallQueue.Top().(int) {
+			heap.Push(p.bigQueue, val)
 		} else {
-			heap.Push(&p.bigQueue, -heap.Pop(&p.smallQueue).(int))
-			heap.Push(&p.smallQueue, -val)
+			heap.Push(p.bigQueue, -heap.Pop(p.smallQueue).(int))
+			heap.Push(p.smallQueue, -val)
 		}
 	}
 }
@@ -158,10 +166,12 @@ func (p *ApiTimeParse) MinVal() int {
 
 // 求中位数
 func (p *ApiTimeParse) MidVal() float64 {
+	defer DefaultTimer.Time("MidVal")()
+
 	p.mu.RLock()
 	p.mu.RUnlock()
 
-	if len(p.smallQueue.IntSlice) > len(p.bigQueue.IntSlice) {
+	if p.smallQueue.Len() > p.bigQueue.Len() {
 		// 左边的只会比右边的大1，这一个就是中位数
 		return float64(-p.smallQueue.Top().(int))
 	}
@@ -178,6 +188,8 @@ func (p *ApiTimeParse) MidVal() float64 {
 }
 
 func (p *ApiTimeParse) AvgVal() float64 {
+	defer DefaultTimer.Time("AvgVal")()
+
 	p.mu.RLock()
 	p.mu.RUnlock()
 
@@ -186,6 +198,8 @@ func (p *ApiTimeParse) AvgVal() float64 {
 
 // tp99值
 func (p *ApiTimeParse) Tp99Val() float64 {
+	defer DefaultTimer.Time("Tp99Val")()
+
 	v := p.totalCnt * 99 / 100
 	for i := 0; i < len(p.tpBucket); i++ {
 		if v-p.tpBucket[i].cnt < 0 {
@@ -196,34 +210,19 @@ func (p *ApiTimeParse) Tp99Val() float64 {
 	return float64(p.tpBucket[len(p.tpBucket)-1].right)
 }
 
-func (p *ApiTimeParse) GetMemory() *ApiMemoInfo {
-	minSizeStr := fmt.Sprint(unsafe.Sizeof(p.minVal))
-	maxSizeStr := fmt.Sprint(unsafe.Sizeof(p.maxVal))
-	bigQSizeStr := fmt.Sprint(uintptr(len(p.bigQueue.IntSlice)) * reflect.TypeOf(p.bigQueue.IntSlice).Elem().Size())
-	smallQSizeStr := fmt.Sprint(uintptr(len(p.smallQueue.IntSlice)) * reflect.TypeOf(p.smallQueue.IntSlice).Elem().Size())
-
-	minSize, _ := strconv.ParseInt(minSizeStr, 10, 64)
-	maxSize, _ := strconv.ParseInt(maxSizeStr, 10, 64)
-	bigQSize, _ := strconv.ParseInt(bigQSizeStr, 10, 64)
-	smallQSize, _ := strconv.ParseInt(smallQSizeStr, 10, 64)
-
-	return &ApiMemoInfo{
-		minSize: minSize,
-		maxSize: maxSize,
-		// bigQSize:   fmt.Sprint(unsafe.Sizeof(p.bigQueue)),
-		bigQSize: bigQSize,
-		// smallQSize: fmt.Sprint(unsafe.Sizeof(p.smallQueue)),
-		smallQSize: smallQSize,
-		Total:      minSize + maxSize + bigQSize + smallQSize,
-	}
-}
-
 // 求解api执行的情况
-func ApiTime(fnName string) func() {
-	ApiMapping.LoadOrStore(fnName, NewApiTimeParse())
+func ApiTime(fnName string, strage ApiTimeHeapBuilder) func() {
+	f1 := DefaultTimer.Time("ApiTime1")
+	if p, err := NewApiTimeParse(strage); err != nil {
+		return func() {}
+	} else {
+		ApiMapping.LoadOrStore(fnName, p)
+	}
+	f1()
 
 	start := time.Now()
 	return func() {
+		defer DefaultTimer.Time("ApiTime2")()
 		durat := time.Since(start).Milliseconds()
 		if val, ok := ApiMapping.Load(fnName); ok {
 			val.(*ApiTimeParse).Add(int(durat))
@@ -235,8 +234,9 @@ func ApiTime(fnName string) func() {
 func ApiParseInfo(fnName string) {
 	if v, ok := ApiMapping.Load(fnName); ok {
 		val := v.(*ApiTimeParse)
-		info := val.GetMemory()
-		fmt.Printf("[%s]当前内存状态: 总值: %dbyte", fnName, info.Total*8)
-		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f\n, TP99: %.2f", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal(), val.Tp99Val())
+		// info := val.GetMemory()
+
+		fmt.Printf("[%s]当前占用总值: %dbyte", fnName, (val.smallQueue.GetSize()+val.bigQueue.GetSize())*8)
+		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f, TP99: %.2f\n", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal(), val.Tp99Val())
 	}
 }
