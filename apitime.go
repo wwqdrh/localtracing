@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,15 +17,15 @@ type (
 	ApiTp struct {
 		left  int
 		right int
-		cnt   int
+		cnt   int64
 	}
 
 	ApiTimeParse struct {
 		mu        sync.RWMutex
-		minVal    int
-		maxVal    int
-		totalCnt  int
-		totalTime int // mill 毫秒
+		minVal    int64
+		maxVal    int64
+		totalCnt  int64
+		totalTime int64 // mill 毫秒
 		// bigQueue   queue // 小顶堆 存正数
 		// smallQueue queue // 大顶堆 存负数
 		bigQueue   ApiTimeHeapInterface
@@ -83,23 +84,23 @@ func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
 }
 
 // 添加新的数据
+// 不要加大锁
 func (p *ApiTimeParse) Add(val int) {
 	defer DefaultTimer.Time("Add")()
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// p.mu.Lock()
+	// defer p.mu.Unlock()
 
-	if val < p.minVal {
-		p.minVal = val
+	if c := atomic.LoadInt64(&p.minVal); int64(val) < c {
+		atomic.CompareAndSwapInt64(&p.minVal, c, int64(val))
 	}
-	if val > p.maxVal {
-		p.maxVal = val
+	if c := atomic.LoadInt64(&p.maxVal); int64(val) > c {
+		atomic.CompareAndSwapInt64(&p.maxVal, c, int64(val))
 	}
-	p.totalCnt++
-	p.totalTime += val
+	atomic.AddInt64(&p.totalCnt, 1)
+	atomic.AddInt64(&p.totalTime, int64(val))
 
 	// tpbuckets计数
-	t1 := DefaultTimer.Time("Add桶计数")
 	left, right := 0, len(p.tpBucket)-1
 	flag := false
 	for left < right {
@@ -120,12 +121,9 @@ func (p *ApiTimeParse) Add(val int) {
 			right = mid
 		}
 	}
-	p.tpBucket[left].cnt++
-	t1()
+	atomic.AddInt64(&p.tpBucket[left].cnt, 1)
 
 	// 如果两边长度一样 调整结构 让左边多1
-	t2 := DefaultTimer.Time("Add对顶堆重排序")
-	defer t2()
 	if p.bigQueue.Len() == p.smallQueue.Len() {
 		if p.bigQueue.Len() == 0 {
 			heap.Push(p.smallQueue, -val)
@@ -153,7 +151,7 @@ func (p *ApiTimeParse) MaxVal() int {
 	p.mu.RLock()
 	p.mu.RUnlock()
 
-	return p.minVal
+	return int(p.maxVal)
 }
 
 // 求最小值
@@ -161,7 +159,7 @@ func (p *ApiTimeParse) MinVal() int {
 	p.mu.RLock()
 	p.mu.RUnlock()
 
-	return p.minVal
+	return int(p.minVal)
 }
 
 // 求中位数
