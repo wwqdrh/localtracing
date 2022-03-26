@@ -1,28 +1,10 @@
-package localtracing
+package cache
 
 import (
-	"bytes"
 	"container/list"
 	"errors"
-	"runtime"
-	"strconv"
 	"sync"
 )
-
-var tracingContext = NewLruCache(10000) // 协程id与tracingid的映射
-
-func goID() uint64 {
-	b := make([]byte, 64)
-	b = b[:runtime.Stack(b, false)]
-	b = bytes.TrimPrefix(b, []byte("goroutine "))
-	b = b[:bytes.IndexByte(b, ' ')]
-	n, _ := strconv.ParseUint(string(b), 10, 64)
-	return n
-}
-
-func addContext(tracingID string) {
-	tracingContext.Add(goID(), tracingID)
-}
 
 type LruCache struct {
 	capacity int // 最大容量

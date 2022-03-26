@@ -1,10 +1,12 @@
-package localtracing
+package data
 
 import (
 	"fmt"
 	"os"
 	"strconv"
 	"sync/atomic"
+
+	"github.com/wwqdrh/localtracing/internal/driver"
 )
 
 // 使用leveldb存储数据而不是直接加在内存中
@@ -12,17 +14,17 @@ import (
 // 堆的名字-索引位置: 值
 const noneInt = -1 << 31
 
-var defaultDriver *LevelDBDriver
+var defaultDriver *driver.LevelDBDriver
 
 type diskHeap struct {
 	length   int64 // 维护一个内存中的length，减少调用 分析可知Len耗时最多
-	d        *LevelDBDriver
+	d        *driver.LevelDBDriver
 	heapName string
 	dbName   string
 }
 
 func init() {
-	driver, err := NewLevelDBDriver("./temp/heap")
+	driver, err := driver.NewLevelDBDriver("./temp/heap")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(0)
@@ -31,7 +33,7 @@ func init() {
 }
 
 //  prefix, dbName, heapName string
-func NewDiskHeap(args ...string) (ApiTimeHeapInterface, error) {
+func NewDiskHeap(args ...string) (IHeap, error) {
 	// heap.Push()
 	_, dbName, heapName := args[0], args[1], args[2]
 
@@ -53,8 +55,6 @@ func (h *diskHeap) idKey(i int) string {
 
 // -1<<31 就是不存在
 func (h *diskHeap) getVal(i int) int {
-	defer DefaultTimer.Time("getVal")()
-
 	var a int
 	if data, err := h.d.Get(h.dbName, h.idKey(i)); err != nil {
 		return noneInt
@@ -69,7 +69,6 @@ func (h *diskHeap) getVal(i int) int {
 }
 
 func (h *diskHeap) Len() int {
-	defer DefaultTimer.Time("Len")()
 	if h.length != -1 {
 		return int(h.length)
 	}
@@ -87,8 +86,6 @@ func (h *diskHeap) Len() int {
 }
 
 func (h *diskHeap) Less(i, j int) bool {
-	defer DefaultTimer.Time("Less")()
-
 	a, b := h.getVal(i), h.getVal(j)
 	if a == noneInt || b == noneInt {
 		return false
@@ -99,8 +96,6 @@ func (h *diskHeap) Less(i, j int) bool {
 
 // TODO 目前的swap是非原子的，可能存在数据不一致
 func (h *diskHeap) Swap(i, j int) {
-	defer DefaultTimer.Time("Swap")()
-
 	var a, b []byte
 	if data, err := h.d.Get(h.dbName, h.idKey(i)); err != nil {
 		return
@@ -117,16 +112,12 @@ func (h *diskHeap) Swap(i, j int) {
 }
 
 func (h *diskHeap) Push(val interface{}) {
-	defer DefaultTimer.Time("Push")()
-
 	h.d.Put(h.dbName, h.idKey(h.Len()), []byte(fmt.Sprint(val.(int))))
 	h.d.Put(h.dbName, h.lenKey(), []byte(fmt.Sprint(h.Len()+1)))
 	atomic.AddInt64(&h.length, 1)
 }
 
 func (h *diskHeap) Pop() interface{} {
-	defer DefaultTimer.Time("Pop")()
-
 	res := h.getVal(h.Len() - 1)
 	if res == noneInt {
 		return nil
@@ -142,17 +133,8 @@ func (h *diskHeap) Truncate() error {
 }
 
 func (h *diskHeap) Top() interface{} {
-	defer DefaultTimer.Time("Top")()
-
 	if h.Len() == 0 {
 		return nil
 	}
 	return h.getVal(0)
-}
-
-func (h *diskHeap) GetSize() int64 {
-	defer DefaultTimer.Time("GetSize")()
-
-	size, _ := DirSize(h.d.GetDBName(h.dbName))
-	return size
 }

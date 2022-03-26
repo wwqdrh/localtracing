@@ -1,14 +1,21 @@
 package localtracing
 
 import (
+	"errors"
 	"fmt"
+	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
+	"github.com/wwqdrh/localtracing/logger"
 )
 
 func TestGinMiddleware(t *testing.T) {
@@ -17,7 +24,6 @@ func TestGinMiddleware(t *testing.T) {
 
 	r.GET("/heath", func(ctx *gin.Context) {
 		defer TracingTime("heath")()
-		fmt.Println(goID())
 		handleA()
 		ctx.String(200, "hello")
 	})
@@ -69,4 +75,58 @@ func handleA() {
 
 func handleB() {
 	time.Sleep(200 * time.Millisecond)
+}
+
+func TestTimeTotal(t *testing.T) {
+	var totalTime int64 = 0
+
+	var a = func(w *sync.WaitGroup) {
+		defer w.Done()
+		defer DefaultTime.Time("a")()
+
+		c := rand.Intn(1000)
+		fmt.Printf("执行了%d毫秒\n", c)
+		atomic.AddInt64(&totalTime, int64(c))
+		time.Sleep(time.Duration(c) * time.Millisecond)
+	}
+
+	wait := sync.WaitGroup{}
+	wait.Add(100)
+	for i := 0; i < 100; i++ {
+		go a(&wait)
+	}
+	wait.Wait()
+	DefaultTime.AllInfo()
+	fmt.Printf("总数: %d毫秒\n", totalTime)
+}
+
+func TestLg(t *testing.T) {
+	h := logger.NewAsyncHandler("log", "zxlog", os.Stdout, 3, 2)
+
+	go func() { h.Debug().Str("name", "jack").Msg("111") }()
+	h.SetLevel(0, time.Second)
+	go func() { h.Debug().Str("name", "jack").Msg("222") }()
+	time.Sleep(time.Second * 2)
+	go func() { h.Debug().Str("name", "jack").Msg("333") }()
+	go func() { h.Error("err").Str("name", "jack").Msg("444") }()
+	go func() { h.Error("err").Str("name", "jack").Err(errors.New("lll")).Msg("555") }()
+	log.Println(logger.MessageRemaining())
+	time.Sleep(5 * time.Second)
+}
+
+func TestError(t *testing.T) {
+	e := errors.New("test")
+	fmt.Println(e)
+}
+
+func TestRoute(t *testing.T) {
+	h := logger.NewAsyncHandler("log", "zxlog", os.Stdout, 3, 2)
+	http.HandleFunc("/", h.RouteWithLogTo("ddd", func(w http.ResponseWriter, r *http.Request, et *zerolog.Event) {
+		panic("eee")
+	}))
+	go http.ListenAndServe(":8081", nil)
+	time.Sleep(time.Second)
+
+	http.Get("http://localhost:8081/sss")
+	time.Sleep(time.Millisecond)
 }

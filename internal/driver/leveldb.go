@@ -1,4 +1,4 @@
-package localtracing
+package driver
 
 import (
 	"encoding/json"
@@ -311,8 +311,23 @@ func (l *LevelDBDriver) IterAll(dbName string) error {
 
 	iter := db.NewIterator(nil, nil)
 	for iter.Next() {
-		fmt.Sprintf("%s = %s \n", string(iter.Key()), string(iter.Value()))
+		fmt.Printf("%s = %s \n", string(iter.Key()), string(iter.Value()))
 	}
 
 	return nil
+}
+
+func (l *LevelDBDriver) IterAllLen(dbName string) (int, error) {
+	db, err := l.GetDB(dbName)
+	if err != nil {
+		return -1, errors.New("未初始化数据库")
+	}
+
+	iter := db.NewIterator(nil, nil)
+	cnt := 0
+	for iter.Next() {
+		cnt++
+	}
+
+	return cnt, nil
 }

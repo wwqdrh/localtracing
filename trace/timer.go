@@ -1,10 +1,12 @@
-package localtracing
+package trace
 
 import (
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wwqdrh/localtracing/utils"
 )
 
 // 计算函数调用情况总耗时
@@ -27,7 +29,7 @@ func NewTotalTimer() *TotalTimer {
 }
 
 func (t *TotalTimer) getName(fnName string) string {
-	return fmt.Sprintf("%d-%s", goID(), fnName)
+	return fmt.Sprintf("%d-%s", utils.GoID(), fnName)
 }
 
 // TODO 存在并发情况，不能单纯的将所有累加

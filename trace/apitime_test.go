@@ -1,4 +1,4 @@
-package localtracing
+package trace
 
 import (
 	"fmt"
@@ -6,10 +6,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wwqdrh/localtracing/internal/data"
 )
 
 func TestTimeParse(t *testing.T) {
-	p, err := NewApiTimeParse(NewDiskHeap)
+	p, err := NewApiTimeParse(data.NewDiskHeap)
 	if err != nil {
 		t.Error(err)
 	}
@@ -39,7 +41,7 @@ func TestTimeParse(t *testing.T) {
 func TestMemoryApiTime(t *testing.T) {
 	var fn = func(w *sync.WaitGroup) {
 		defer w.Done()
-		defer ApiTime("testapifn", NewMemoryHeap)()
+		defer ApiTime("testapifn", data.NewMemoryHeap)()
 
 		time.Sleep(time.Duration(rand.Intn(3000)) * time.Millisecond)
 	}
@@ -163,7 +165,7 @@ func TestMemoryApiTime(t *testing.T) {
 func TestDiskApiTime(t *testing.T) {
 	var fn = func(w *sync.WaitGroup) {
 		defer w.Done()
-		defer ApiTime("testapifn", NewDiskHeap)()
+		defer ApiTime("testapifn", data.NewDiskHeap)()
 
 		time.Sleep(time.Duration(rand.Intn(3000)) * time.Millisecond)
 	}
@@ -179,6 +181,7 @@ func TestDiskApiTime(t *testing.T) {
 	fmt.Printf("执行耗时:%.2f", time.Since(step).Seconds())
 	ApiParseInfo("testapifn")
 	DefaultTimer.AllInfo()
+
 	// 10w
 	step = time.Now()
 	wait = sync.WaitGroup{}
@@ -269,4 +272,10 @@ func TestDiskApiTime(t *testing.T) {
 	fmt.Printf("执行耗时:%.2f", time.Since(step).Seconds())
 	ApiParseInfo("testapifn")
 	DefaultTimer.AllInfo()
+}
+
+func TestTracingTime(t *testing.T) {
+	defer TracingTime("TestTracingTime")()
+
+	time.Sleep(3 * time.Second)
 }

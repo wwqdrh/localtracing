@@ -1,4 +1,4 @@
-package localtracing
+package utils
 
 import (
 	"fmt"

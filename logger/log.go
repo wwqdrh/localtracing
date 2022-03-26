@@ -1,4 +1,4 @@
-package localtracing
+package logger
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"github.com/wwqdrh/localtracing/utils"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -15,7 +16,7 @@ var (
 )
 
 func NewTracingLog(logDir string) error {
-	if ok, _ := PathExists(logDir); !ok {
+	if ok, _ := utils.PathExists(logDir); !ok {
 		_ = os.MkdirAll(logDir, os.ModePerm)
 	}
 	logPath := path.Join(logDir, "trace.log")
@@ -80,27 +81,4 @@ func NewTracingLog(logDir string) error {
 	)
 
 	return nil
-}
-
-func TracingTime(funcName string) func() {
-	tracingID := ""
-	if val, ok := tracingContext.Get(goID()); !ok {
-		return func() {}
-	} else {
-		tracingID = val.(string)
-	}
-
-	now := time.Now()
-	traceLogger.Info("任务开始",
-		zap.String("traceid", tracingID),
-		zap.Int64("start_time", time.Now().UnixMicro()),
-	)
-
-	return func() {
-		traceLogger.Info("任务结束",
-			zap.String("traceid", tracingID),
-			zap.Int64("end_time", time.Now().Unix()),
-			zap.String("duration", time.Since(now).String()),
-		)
-	}
 }

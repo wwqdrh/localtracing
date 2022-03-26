@@ -1,8 +1,9 @@
-package localtracing
+package data
 
 import (
 	"container/heap"
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -11,7 +12,9 @@ func TestDiskHeap(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	defer h.Truncate()
+	defer func() {
+		os.RemoveAll("./temp/heap")
+	}()
 
 	fmt.Println(h.Len())
 
@@ -44,8 +47,9 @@ func TestDiskHeap2(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	defer h.Truncate()
-
+	defer func() {
+		os.RemoveAll("./temp/heap")
+	}()
 	fmt.Println(h.Len())
 
 	heap.Push(h, -11)

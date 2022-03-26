@@ -1,4 +1,4 @@
-package localtracing
+package trace
 
 import (
 	"container/heap"
@@ -6,11 +6,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/wwqdrh/localtracing/internal/cache"
+	"github.com/wwqdrh/localtracing/internal/data"
+	"github.com/wwqdrh/localtracing/utils"
+	"go.uber.org/zap"
 )
 
 var (
-	DefaultStrage ApiTimeHeapBuilder = NewDiskHeap
-	ApiMapping    sync.Map           = sync.Map{} // map[string]*ApiTimeParse
+	tracingContext                    = cache.NewLruCache(10000) // 协程id与tracingid的映射
+	DefaultStrage  ApiTimeHeapBuilder = data.NewMemoryHeap
+	ApiMapping     sync.Map           = sync.Map{} // map[string]*ApiTimeParse
 )
 
 type (
@@ -28,8 +34,8 @@ type (
 		totalTime int64 // mill 毫秒
 		// bigQueue   queue // 小顶堆 存正数
 		// smallQueue queue // 大顶堆 存负数
-		bigQueue   ApiTimeHeapInterface
-		smallQueue ApiTimeHeapInterface
+		bigQueue   ApiTimeHeap
+		smallQueue ApiTimeHeap
 		tpBucket   []*ApiTp
 	}
 
@@ -42,6 +48,10 @@ type (
 		DiskTotaal int64
 	}
 )
+
+func AddContext(tracingID string) {
+	tracingContext.Add(utils.GoID(), tracingID)
+}
 
 func NewApiTimeParse(strages ...ApiTimeHeapBuilder) (*ApiTimeParse, error) {
 	var starge ApiTimeHeapBuilder
@@ -90,7 +100,6 @@ func (p *ApiTimeParse) Add(val int) {
 
 	// p.mu.Lock()
 	// defer p.mu.Unlock()
-
 	if c := atomic.LoadInt64(&p.minVal); int64(val) < c {
 		atomic.CompareAndSwapInt64(&p.minVal, c, int64(val))
 	}
@@ -124,6 +133,8 @@ func (p *ApiTimeParse) Add(val int) {
 	atomic.AddInt64(&p.tpBucket[left].cnt, 1)
 
 	// 如果两边长度一样 调整结构 让左边多1
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.bigQueue.Len() == p.smallQueue.Len() {
 		if p.bigQueue.Len() == 0 {
 			heap.Push(p.smallQueue, -val)
@@ -164,8 +175,6 @@ func (p *ApiTimeParse) MinVal() int {
 
 // 求中位数
 func (p *ApiTimeParse) MidVal() float64 {
-	defer DefaultTimer.Time("MidVal")()
-
 	p.mu.RLock()
 	p.mu.RUnlock()
 
@@ -186,8 +195,6 @@ func (p *ApiTimeParse) MidVal() float64 {
 }
 
 func (p *ApiTimeParse) AvgVal() float64 {
-	defer DefaultTimer.Time("AvgVal")()
-
 	p.mu.RLock()
 	p.mu.RUnlock()
 
@@ -196,8 +203,6 @@ func (p *ApiTimeParse) AvgVal() float64 {
 
 // tp99值
 func (p *ApiTimeParse) Tp99Val() float64 {
-	defer DefaultTimer.Time("Tp99Val")()
-
 	v := p.totalCnt * 99 / 100
 	for i := 0; i < len(p.tpBucket); i++ {
 		if v-p.tpBucket[i].cnt < 0 {
@@ -210,17 +215,14 @@ func (p *ApiTimeParse) Tp99Val() float64 {
 
 // 求解api执行的情况
 func ApiTime(fnName string, strage ApiTimeHeapBuilder) func() {
-	f1 := DefaultTimer.Time("ApiTime1")
 	if p, err := NewApiTimeParse(strage); err != nil {
 		return func() {}
 	} else {
 		ApiMapping.LoadOrStore(fnName, p)
 	}
-	f1()
 
 	start := time.Now()
 	return func() {
-		defer DefaultTimer.Time("ApiTime2")()
 		durat := time.Since(start).Milliseconds()
 		if val, ok := ApiMapping.Load(fnName); ok {
 			val.(*ApiTimeParse).Add(int(durat))
@@ -234,7 +236,30 @@ func ApiParseInfo(fnName string) {
 		val := v.(*ApiTimeParse)
 		// info := val.GetMemory()
 
-		fmt.Printf("[%s]当前占用总值: %dbyte", fnName, (val.smallQueue.GetSize()+val.bigQueue.GetSize())*8)
+		// fmt.Printf("[%s]当前占用总值: %dbyte", fnName, (val.smallQueue.GetSize()+val.bigQueue.GetSize())*8)
 		fmt.Printf("[%s]执行情况: 最小值: %d, 最大值: %d, 中位数: %.2f, 平均数: %.2f, TP99: %.2f\n", fnName, val.minVal, val.maxVal, val.MidVal(), val.AvgVal(), val.Tp99Val())
+	}
+}
+
+func TracingTime(funcName string) func() {
+	tracingID := ""
+	if val, ok := tracingContext.Get(utils.GoID()); !ok {
+		return func() {}
+	} else {
+		tracingID = val.(string)
+	}
+
+	now := time.Now()
+	traceLogger.Info("任务开始",
+		zap.String("traceid", tracingID),
+		zap.Int64("start_time", time.Now().UnixMicro()),
+	)
+
+	return func() {
+		traceLogger.Info("任务结束",
+			zap.String("traceid", tracingID),
+			zap.Int64("end_time", time.Now().Unix()),
+			zap.String("duration", time.Since(now).String()),
+		)
 	}
 }
