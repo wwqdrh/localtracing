@@ -18,37 +18,35 @@ import (
 	"github.com/wwqdrh/localtracing/logger"
 )
 
+// const (
+// 	// DebugLevel defines debug log level.
+// 	DebugLevel Level = iota
+// 	// InfoLevel defines info log level.
+// 	InfoLevel
+// 	// WarnLevel defines warn log level.
+// 	WarnLevel
+// 	// ErrorLevel defines error log level.
+// 	ErrorLevel
+// 	// FatalLevel defines fatal log level.
+// 	FatalLevel
+// 	// PanicLevel defines panic log level.
+// 	PanicLevel
+// 	// NoLevel defines an absent log level.
+// 	NoLevel
+// 	// Disabled disables the logger.
+// 	Disabled
+
+// 	// TraceLevel defines trace log level.
+// 	TraceLevel Level = -1
+// 	// Values less than TraceLevel are handled as numbers.
+// )
+
 func TestGinMiddleware(t *testing.T) {
 	r := gin.Default()
-	r.Use(TracingMiddleware())
-
+	r.Use(TracingMiddleware("./log"))
+	SetLogLevel(-1)
 	r.GET("/heath", func(ctx *gin.Context) {
-		defer TracingTime("heath")()
-		handleA()
-		ctx.String(200, "hello")
-	})
-
-	wait := sync.WaitGroup{}
-	wait.Add(10)
-	for i := 0; i < 10; i++ {
-		go func() {
-			defer wait.Done()
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/heath", nil)
-			r.ServeHTTP(w, req)
-			fmt.Println(w.Body.String())
-		}()
-	}
-	wait.Wait()
-}
-
-func TestGinRegister(t *testing.T) {
-	r := gin.Default()
-
-	Register(r, "./temp")
-
-	r.GET("/heath", func(ctx *gin.Context) {
-		defer TracingTime("heath")()
+		ctx.Value("lg").(*logger.Handler).Debug().Msg("测试请求")
 		handleA()
 		ctx.String(200, "hello")
 	})
@@ -68,7 +66,6 @@ func TestGinRegister(t *testing.T) {
 }
 
 func handleA() {
-	defer TracingTime("handleA")()
 	time.Sleep(300 * time.Millisecond)
 	handleB()
 }
@@ -82,7 +79,7 @@ func TestTimeTotal(t *testing.T) {
 
 	var a = func(w *sync.WaitGroup) {
 		defer w.Done()
-		defer DefaultTime.Time("a")()
+		// defer DefaultTime.Time("a")()
 
 		c := rand.Intn(1000)
 		fmt.Printf("执行了%d毫秒\n", c)
@@ -96,7 +93,7 @@ func TestTimeTotal(t *testing.T) {
 		go a(&wait)
 	}
 	wait.Wait()
-	DefaultTime.AllInfo()
+	// DefaultTime.AllInfo()
 	fmt.Printf("总数: %d毫秒\n", totalTime)
 }
 

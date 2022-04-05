@@ -9,6 +9,7 @@ import (
 
 	"github.com/wwqdrh/localtracing/internal/cache"
 	"github.com/wwqdrh/localtracing/internal/data"
+	"github.com/wwqdrh/localtracing/logger"
 	"github.com/wwqdrh/localtracing/utils"
 	"go.uber.org/zap"
 )
@@ -250,13 +251,13 @@ func TracingTime(funcName string) func() {
 	}
 
 	now := time.Now()
-	traceLogger.Info("任务开始",
+	logger.TraceLogger.Info("任务开始",
 		zap.String("traceid", tracingID),
 		zap.Int64("start_time", time.Now().UnixMicro()),
 	)
 
 	return func() {
-		traceLogger.Info("任务结束",
+		logger.TraceLogger.Info("任务结束",
 			zap.String("traceid", tracingID),
 			zap.Int64("end_time", time.Now().Unix()),
 			zap.String("duration", time.Since(now).String()),

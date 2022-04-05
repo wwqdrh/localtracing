@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	traceLogger *zap.Logger
+	TraceLogger *zap.Logger
 )
 
 func NewTracingLog(logDir string) error {
@@ -70,7 +70,7 @@ func NewTracingLog(logDir string) error {
 		return err
 	}
 
-	traceLogger = zap.New(
+	TraceLogger = zap.New(
 		zapcore.NewTee(
 			zapcore.NewCore(
 				zapcore.NewJSONEncoder(encoderConfig),
