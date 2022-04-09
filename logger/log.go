@@ -1,10 +1,12 @@
 package logger
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"time"
 
+	"github.com/hpcloud/tail"
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/wwqdrh/localtracing/utils"
 	"go.uber.org/zap"
@@ -13,7 +15,13 @@ import (
 
 var (
 	TraceLogger *zap.Logger
+	tailHandler = map[string]*tailInfo{} // 文件名与channel的映射
 )
+
+type tailInfo struct {
+	cmd *tail.Tail
+	chs []chan string
+}
 
 func NewTracingLog(logDir string) error {
 	if ok, _ := utils.PathExists(logDir); !ok {
@@ -81,4 +89,58 @@ func NewTracingLog(logDir string) error {
 	)
 
 	return nil
+}
+
+// 没一个要读取的file可能由多个ws连接， 要复用则包装tails，并加上一系列channel
+func TailLog(fileName string) chan string {
+	cur := make(chan string, 1000)
+	if val, ok := tailHandler[fileName]; ok {
+		val.chs = append(val.chs, cur)
+		return cur
+	}
+
+	config := tail.Config{
+		ReOpen:    true,                                 // 重新打开
+		Follow:    true,                                 // 是否跟随
+		Location:  &tail.SeekInfo{Offset: 0, Whence: 2}, // 从文件的哪个地方开始读
+		MustExist: false,                                // 文件不存在不报错
+		Poll:      true,
+	}
+	tails, err := tail.TailFile(fileName, config)
+	if err != nil {
+		fmt.Println("tail file failed, err:", err)
+		return nil
+	}
+	handler := &tailInfo{
+		cmd: tails,
+		chs: []chan string{cur},
+	}
+	tailHandler[fileName] = handler
+	go func() {
+		defer func() {
+			recover() // 可能会向close channel写数据
+		}()
+
+		var (
+			line *tail.Line
+			ok   bool
+		)
+		for {
+			line, ok = <-tails.Lines
+			if !ok {
+				fmt.Printf("tail file close reopen, filename:%s\n", tails.Filename)
+				time.Sleep(time.Second)
+				continue
+			}
+
+			// 为所有的channel发送
+			for _, ch := range handler.chs {
+				select {
+				case ch <- line.Text: // 有可能是close channel
+				default:
+				}
+			}
+		}
+	}()
+	return cur
 }
