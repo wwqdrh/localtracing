@@ -21,6 +21,10 @@ func (g GinHanlderAdapter) Context(val interface{}) (*http.Request, http.Respons
 	return ctx.Request, ctx.Writer, nil
 }
 
+func (g GinHanlderAdapter) Static(url, path string) {
+	g.engine.StaticFS(url, http.Dir(path))
+}
+
 func (g GinHanlderAdapter) Get(url string, fn func(interface{})) {
 	g.engine.GET(url, func(ctx *gin.Context) {
 		fn(ctx)
