@@ -1,11 +1,11 @@
-package localtracing
+package main
 
 import (
 	"errors"
 	"net/http"
-	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wwqdrh/localtracing"
 )
 
 type GinHanlderAdapter struct {
@@ -21,8 +21,8 @@ func (g GinHanlderAdapter) Context(val interface{}) (*http.Request, http.Respons
 	return ctx.Request, ctx.Writer, nil
 }
 
-func (g GinHanlderAdapter) Static(url, path string) {
-	g.engine.StaticFS(url, http.Dir(path))
+func (g GinHanlderAdapter) Static(url string, path http.FileSystem) {
+	g.engine.StaticFS(url, path)
 }
 
 func (g GinHanlderAdapter) Get(url string, fn func(interface{})) {
@@ -31,10 +31,10 @@ func (g GinHanlderAdapter) Get(url string, fn func(interface{})) {
 	})
 }
 
-func TestGinMonitor(t *testing.T) {
+func main() {
 	engine := gin.Default()
 
-	NewMonitor(&GinHanlderAdapter{engine: engine})
+	localtracing.NewMonitor(&GinHanlderAdapter{engine: engine})
 
 	srv := http.Server{
 		Handler: engine,

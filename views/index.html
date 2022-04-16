@@ -7,8 +7,8 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ .PageTitle }}</title>
-    <link href="/static/css/tailwindcss.2.2.9.min.css" rel="stylesheet" />
-    <script src="/static/js/vue.2.6.min.js"></script>
+    <link href="/static/views/assets/css/tailwindcss.2.2.9.min.css" rel="stylesheet" />
+    <script src="/static/views/assets/js/vue.2.6.min.js"></script>
     <!-- Prism Editor -->
     <script src="https://unpkg.com/vue-prism-editor"></script>
     <link rel="stylesheet" href="https://unpkg.com/vue-prism-editor/dist/prismeditor.min.css" />
@@ -46,9 +46,10 @@
         </prism-editor>
     </div>
 
-    <script src="/static/js/websocket.js"></script>
+    <script src="/static/views/assets/js/websocket.js"></script>
     <script>
-        let testlogurl = "ws:127.0.0.1:8080/log/data?file=log%2Ftest.log"
+        let host = location.host
+        let testlogurl = `ws:${host}/log/data?file=log%2Ftest.log`
 
         new Vue({
             el: "#app",
