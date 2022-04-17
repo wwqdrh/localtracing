@@ -49,7 +49,8 @@
     <script src="/static/views/assets/js/websocket.js"></script>
     <script>
         let host = location.host
-        let testlogurl = `ws:${host}/log/data?file=log%2Ftest.log`
+        let logfile = {{ .LogFile }}
+        let testlogurl = `ws:${host}/log/data?file=${encodeURIComponent(logfile)}`
 
         new Vue({
             el: "#app",

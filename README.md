@@ -21,3 +21,12 @@ go get github.com/elazarl/go-bindata-assetfs
 需要包装一下先从godata从获取值然后execute
 
 需要注意的是这里动态创建template的名字需要和模板里的名字对应上否则不能解析
+
+
+## 示例
+
+examples中的示例
+
+实时日志查看: http://localhost:8080/view?file=log.txt
+
+在对应的log.txt新建日志记录查看效果

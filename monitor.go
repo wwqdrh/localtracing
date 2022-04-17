@@ -94,17 +94,18 @@ func ExecuteBinTemplate(wr io.Writer, name, path string, data interface{}) error
 
 // 路由函数
 func (s *MonitorServer) indexView(ctx interface{}) {
-	_, w, err := s.httpHandler.Context(ctx)
+	r, w, err := s.httpHandler.Context(ctx)
 	if err != nil {
 		w.WriteHeader(500)
 		w.Write([]byte(err.Error()))
 	} else {
 		// htmlTplEngine.ExecuteTemplate()
+		logfile := r.URL.Query().Get("file")
 		if err := ExecuteBinTemplate(
 			w,
 			"index",
 			"views/index.html",
-			map[string]interface{}{"PageTitle": "实时日志"},
+			map[string]interface{}{"PageTitle": "实时日志", "LogFile": logfile},
 		); err != nil {
 			w.WriteHeader(500)
 			w.Write([]byte(err.Error()))
