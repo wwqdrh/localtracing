@@ -41,6 +41,10 @@ import (
 // 	// Values less than TraceLevel are handled as numbers.
 // )
 
+func TestLocaltracingHandler(t *testing.T) {
+	NewLocaltracingHandler()
+}
+
 func TestGinMiddleware(t *testing.T) {
 	r := gin.Default()
 	r.Use(TracingMiddleware("./log"))
