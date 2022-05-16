@@ -7,15 +7,23 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/hpcloud/tail"
+
 	assetfs "github.com/elazarl/go-bindata-assetfs"
 	"github.com/gorilla/websocket"
-	"github.com/wwqdrh/localtracing/logger"
 )
 
 ////////////////////
 // 监控组件 提供服务让外部实时访问日志
 // 同时也可以实现让control组件来一起管理这些服务(在同一的地方来查看与管理这些服务的中的日志内容，服务注册与发现的思想)
 ////////////////////
+
+var tailHandler = map[string]*tailInfo{} // 文件名与channel的映射
+
+type tailInfo struct {
+	cmd *tail.Tail
+	chs []chan string
+}
 
 var upgrader = websocket.Upgrader{
 	// 解决跨域问题
@@ -59,7 +67,11 @@ type MonitorServer struct {
 }
 
 // 挂载路由
-func NewMonitor(fn HTTPHandler) {
+func NewMonitor(fn HTTPHandler, logDir string) error {
+	if _, err := NewLocaltracing(logDir); err != nil {
+		return err
+	}
+
 	s := MonitorServer{httpHandler: fn}
 	// 静态资源
 	fn.Static("/static", fs)
@@ -72,6 +84,7 @@ func NewMonitor(fn HTTPHandler) {
 
 	// 根据日志文件获取内容 需要使用websocket持续连接
 	fn.Get("/log/data", s.LogData)
+	return nil
 }
 
 // bindatatemplate 方法
@@ -149,7 +162,7 @@ func (s *MonitorServer) LogData(ctx interface{}) {
 	defer ws.Close()
 
 	file := r.URL.Query().Get("file")
-	ch := logger.TailLog(file)
+	ch := GetLocalTracing().TailLog(file)
 
 	go func() {
 		for {
