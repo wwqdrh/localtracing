@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path"
 
 	"github.com/hpcloud/tail"
 
@@ -67,9 +69,10 @@ type MonitorServer struct {
 }
 
 // 挂载路由
-func NewMonitor(fn HTTPHandler, logDir string) error {
-	if _, err := NewLocaltracing(logDir); err != nil {
-		return err
+func NewMonitor(fn HTTPHandler, logDir string) (*LocalTracing, error) {
+	handler, err := NewLocaltracing(logDir)
+	if err != nil {
+		return nil, err
 	}
 
 	s := MonitorServer{httpHandler: fn}
@@ -84,7 +87,7 @@ func NewMonitor(fn HTTPHandler, logDir string) error {
 
 	// 根据日志文件获取内容 需要使用websocket持续连接
 	fn.Get("/log/data", s.LogData)
-	return nil
+	return handler, nil
 }
 
 // bindatatemplate 方法
@@ -152,7 +155,18 @@ func (s *MonitorServer) LogList(ctx interface{}) {
 
 // ws: 日志实时记录
 func (s *MonitorServer) LogData(ctx interface{}) {
-	r, w, err := s.httpHandler.Context(ctx)
+	r, w, _ := s.httpHandler.Context(ctx)
+
+	// check log is exist?
+	file := path.Join(GetLocalTracing().LogDir, r.URL.Query().Get("file"))
+	_, err := os.Stat(file)
+	if os.IsNotExist(err) {
+		w.WriteHeader(500)
+		w.Write([]byte("log error: 日志文件不存在"))
+		return
+	}
+
+	// protocol upgrade
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		w.WriteHeader(500)
@@ -161,29 +175,14 @@ func (s *MonitorServer) LogData(ctx interface{}) {
 	}
 	defer ws.Close()
 
-	file := r.URL.Query().Get("file")
 	ch := GetLocalTracing().TailLog(file)
-
-	go func() {
-		for {
-			mt, message, err := ws.ReadMessage()
-			if err != nil {
-				fmt.Println("read:", err)
-				// close(ch) // TODO 进行关闭
-				break
-			}
-			fmt.Printf("messageType: %d, recv: %s\n", mt, string(message))
-		}
-	}()
-
-	for {
-		select {
-		case line := <-ch:
-			err = ws.WriteMessage(websocket.TextMessage, []byte(line))
-			if err != nil {
-				log.Println("write:", err)
-				return
-			}
+	// TODO 协程泄漏 ch无法关闭到
+	for line := range ch {
+		err = ws.WriteMessage(websocket.TextMessage, []byte(line))
+		if err != nil {
+			log.Println("write:", err)
+			return
 		}
 	}
+	fmt.Println("exit 获取日志退出")
 }

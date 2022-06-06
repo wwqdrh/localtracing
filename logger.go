@@ -19,6 +19,7 @@ import (
 )
 
 type LocalTracing struct {
+	LogDir       string
 	DebugLogger  *zap.Logger
 	InfoLogger   *zap.Logger
 	WarnLogger   *zap.Logger
@@ -91,6 +92,7 @@ func NewLocaltracing(logDir string) (*LocalTracing, error) {
 	}
 
 	handler := &LocalTracing{
+		LogDir: logDir,
 		DebugLogger: zap.New(
 			zapcore.NewTee(
 				zapcore.NewCore(
@@ -294,7 +296,7 @@ func (l *LocalTracing) TailLog(fileName string) chan string {
 			// 为所有的channel发送
 			for _, ch := range handler.chs {
 				select {
-				case ch <- line.Text: // 有可能是close channel
+				case ch <- line.Text: // TODO 有可能是close channel 需要加上判断
 				default:
 				}
 			}
