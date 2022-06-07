@@ -1,6 +1,7 @@
 package localtracing
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -250,12 +251,14 @@ func (l *LocalTracing) Time() func() {
 	}
 }
 
-// 没一个要读取的file可能由多个ws连接， 要复用则包装tails，并加上一系列channel
-
-func (l *LocalTracing) TailLog(fileName string) chan string {
+// 每一个要读取的file可能由多个ws连接， 要复用则包装tails，并加上一系列channel
+func (l *LocalTracing) TailLog(fileName string, ctx context.Context) chan string {
 	cur := make(chan string, 1000)
 	if val, ok := tailHandler[fileName]; ok {
-		val.chs = append(val.chs, cur)
+		val.chs = append(val.chs, connNode{
+			ch:  cur,
+			ctx: ctx,
+		})
 		return cur
 	}
 
@@ -273,7 +276,12 @@ func (l *LocalTracing) TailLog(fileName string) chan string {
 	}
 	handler := &tailInfo{
 		cmd: tails,
-		chs: []chan string{cur},
+		chs: []connNode{
+			{
+				ch:  cur,
+				ctx: ctx,
+			},
+		},
 	}
 	tailHandler[fileName] = handler
 	go func() {
@@ -293,10 +301,24 @@ func (l *LocalTracing) TailLog(fileName string) chan string {
 				continue
 			}
 
-			// 为所有的channel发送
-			for _, ch := range handler.chs {
+			// 删除已经关闭的协程数
+			old := handler.chs
+			handler.chs = handler.chs[:0]
+			for _, item := range old {
 				select {
-				case ch <- line.Text: // TODO 有可能是close channel 需要加上判断
+				case <-item.ctx.Done():
+					continue
+				default:
+					handler.chs = append(handler.chs, item)
+				}
+			}
+
+			// 为所有的channel发送
+			for _, item := range handler.chs {
+				select {
+				case <-item.ctx.Done():
+					continue
+				case item.ch <- line.Text: // TODO 有可能是close channel 需要加上判断
 				default:
 				}
 			}

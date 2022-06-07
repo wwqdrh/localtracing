@@ -30,12 +30,11 @@ func (g GinHanlderAdapter) Context(val interface{}) (*http.Request, http.Respons
 
 func (g GinHanlderAdapter) Static(url string, filepath http.FileSystem) {
 	f := http.FileServer(filepath)
-	url = path.Join(url, "/*filepath")
-	g.engine.HEAD(url, func(ctx *gin.Context) {
+	g.engine.HEAD(path.Join(url, "/*filepath"), func(ctx *gin.Context) {
 		ctx.Request.URL.Path = strings.TrimPrefix(ctx.Request.URL.Path, url)
 		f.ServeHTTP(ctx.Writer, ctx.Request)
 	})
-	g.engine.GET(url, func(ctx *gin.Context) {
+	g.engine.GET(path.Join(url, "/*filepath"), func(ctx *gin.Context) {
 		ctx.Request.URL.Path = strings.TrimPrefix(ctx.Request.URL.Path, url)
 		f.ServeHTTP(ctx.Writer, ctx.Request)
 	})

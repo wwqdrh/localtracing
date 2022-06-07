@@ -1,13 +1,14 @@
 package localtracing
 
 import (
-	"fmt"
+	"context"
 	"html/template"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path"
+
+	"net/http/pprof"
 
 	"github.com/hpcloud/tail"
 
@@ -23,8 +24,13 @@ import (
 var tailHandler = map[string]*tailInfo{} // 文件名与channel的映射
 
 type tailInfo struct {
-	cmd *tail.Tail
-	chs []chan string
+	cmd *tail.Tail // 获取最新的日志数据
+	chs []connNode // 多个连接进行复用
+}
+
+type connNode struct {
+	ch  chan string
+	ctx context.Context
 }
 
 var upgrader = websocket.Upgrader{
@@ -35,8 +41,6 @@ var upgrader = websocket.Upgrader{
 } // use default options
 
 var (
-	htmlTplEngine *bindataTemplate
-
 	// 静态资源
 	fs = &assetfs.AssetFS{
 		Asset: func(name string) ([]byte, error) {
@@ -52,7 +56,8 @@ type (
 	HTTPHandler interface {
 		Context(val interface{}) (*http.Request, http.ResponseWriter, error) // 获取request与response
 		Get(string, func(interface{}))                                       // 用于挂载路由
-		Static(string, http.FileSystem)                                      // 挂载静态资源目录
+		Post(string, func(interface{}))
+		Static(string, http.FileSystem) // 挂载静态资源目录
 	}
 
 	// bindata-template包装
@@ -87,6 +92,10 @@ func NewMonitor(fn HTTPHandler, logDir string) (*LocalTracing, error) {
 
 	// 根据日志文件获取内容 需要使用websocket持续连接
 	fn.Get("/log/data", s.LogData)
+
+	// 开启pprof
+	s.EnableProf()
+
 	return handler, nil
 }
 
@@ -173,16 +182,25 @@ func (s *MonitorServer) LogData(ctx interface{}) {
 		w.Write([]byte("upgrade error: " + err.Error()))
 		return
 	}
-	defer ws.Close()
+	// ctx
+	conte, cancel := context.WithCancel(context.TODO())
+	go WsRead(ws, conte, cancel)
+	go WsWrite(ws, GetLocalTracing().TailLog(file, conte), conte, cancel)
+}
 
-	ch := GetLocalTracing().TailLog(file)
-	// TODO 协程泄漏 ch无法关闭到
-	for line := range ch {
-		err = ws.WriteMessage(websocket.TextMessage, []byte(line))
-		if err != nil {
-			log.Println("write:", err)
-			return
-		}
-	}
-	fmt.Println("exit 获取日志退出")
+func (s *MonitorServer) EnableProf() {
+	prefix := "/pprof"
+
+	s.httpHandler.Get(prefix+"/", WrapF(s.httpHandler, pprof.Index))
+	s.httpHandler.Get(prefix+"/cmdline", WrapF(s.httpHandler, pprof.Cmdline))
+	s.httpHandler.Get(prefix+"/profile", WrapF(s.httpHandler, pprof.Profile))
+	s.httpHandler.Get(prefix+"/Symbol", WrapF(s.httpHandler, pprof.Symbol))
+	s.httpHandler.Post(prefix+"/Symbol", WrapF(s.httpHandler, pprof.Symbol))
+	s.httpHandler.Get(prefix+"/trace", WrapF(s.httpHandler, pprof.Trace))
+	s.httpHandler.Get(prefix+"/allocs", WrapH(s.httpHandler, pprof.Handler("allocs")))
+	s.httpHandler.Get(prefix+"/block", WrapH(s.httpHandler, pprof.Handler("block")))
+	s.httpHandler.Get(prefix+"/goroutine", WrapH(s.httpHandler, pprof.Handler("goroutine")))
+	s.httpHandler.Get(prefix+"/heap", WrapH(s.httpHandler, pprof.Handler("heap")))
+	s.httpHandler.Get(prefix+"/mutex", WrapH(s.httpHandler, pprof.Handler("mutex")))
+	s.httpHandler.Get(prefix+"/threadcreate", WrapH(s.httpHandler, pprof.Handler("threadcreate")))
 }
