@@ -167,7 +167,7 @@ func (s *MonitorServer) LogData(ctx interface{}) {
 	r, w, _ := s.httpHandler.Context(ctx)
 
 	// check log is exist?
-	file := path.Join(GetLocalTracing().LogDir, r.URL.Query().Get("file"))
+	file := path.Join(Tracing.LogDir, r.URL.Query().Get("file"))
 	_, err := os.Stat(file)
 	if os.IsNotExist(err) {
 		w.WriteHeader(500)
@@ -185,7 +185,7 @@ func (s *MonitorServer) LogData(ctx interface{}) {
 	// ctx
 	conte, cancel := context.WithCancel(context.TODO())
 	go WsRead(ws, conte, cancel)
-	go WsWrite(ws, GetLocalTracing().TailLog(file, conte), conte, cancel)
+	go WsWrite(ws, Tracing.TailLog(file, conte), conte, cancel)
 }
 
 func (s *MonitorServer) EnableProf() {

@@ -72,6 +72,7 @@ func main() {
 		defer handler.Time()()
 
 		randomRepo1()
+		localtracing.Tracing.Info("ok")
 		ctx.String(200, "OK")
 	})
 
@@ -96,6 +97,7 @@ func randomRepo1() {
 
 	time.Sleep(time.Duration(t) * time.Millisecond)
 	if t > 800 {
+		localtracing.Tracing.Warn("timeout")
 		panic("timeout")
 	}
 
@@ -108,6 +110,7 @@ func randomRepo2() {
 
 	time.Sleep(time.Duration(t) * time.Millisecond)
 	if t > 80 {
+		localtracing.Tracing.Warn("timeout")
 		panic("timeout")
 	}
 }

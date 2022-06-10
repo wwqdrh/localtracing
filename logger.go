@@ -14,157 +14,40 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hpcloud/tail"
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"github.com/wwqdrh/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-type LocalTracing struct {
-	LogDir       string
-	DebugLogger  *zap.Logger
-	InfoLogger   *zap.Logger
-	WarnLogger   *zap.Logger
-	ErrorLogger  *zap.Logger
-	DPanicLogger *zap.Logger
-	PanicLogger  *zap.Logger
-	FatalLogger  *zap.Logger
-}
-
 var (
-	localTracing *LocalTracing
+	Tracing *LocalTracing
 	// 默认日志文件
 	baseLog = "base.log"
-
-	debugPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.DebugLevel
-	})
-	infoPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.InfoLevel
-	})
-	warnPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.WarnLevel
-	})
-	errorPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.ErrorLevel
-	})
-	dPanicPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.DPanicLevel
-	})
-	panicPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.PanicLevel
-	})
-	fatalPriority = zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev == zap.FatalLevel
-	})
-
-	// 日志config
-	encoderConfig = zapcore.EncoderConfig{
-		TimeKey:  "time",
-		LevelKey: "level",
-		NameKey:  "logger",
-		// CallerKey:      "linenum",
-		MessageKey: "msg",
-		// StacktraceKey:  "stacktrace",
-		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.LowercaseLevelEncoder,  // 小写编码器
-		EncodeTime:     zapcore.ISO8601TimeEncoder,     // ISO8601 UTC 时间格式
-		EncodeDuration: zapcore.SecondsDurationEncoder, //
-		EncodeCaller:   zapcore.FullCallerEncoder,      // 全路径编码器
-		EncodeName:     zapcore.FullNameEncoder,
-	}
 )
+
+type LocalTracing struct {
+	*zap.Logger
+
+	LogDir string
+}
 
 func NewLocaltracing(logDir string) (*LocalTracing, error) {
 	if ok, _ := PathExists(logDir); !ok {
 		_ = os.MkdirAll(logDir, os.ModePerm)
 	}
-	logPath := path.Join(logDir, baseLog)
-
-	// rotatelogs.New
-	// 下面配置日志每隔 四小时 轮转一个新文件，保留最近 7天的日志文件，多余的自动清理掉。
-	writer, err := rotatelogs.New(
-		logPath+".%Y%m%d%H",
-		rotatelogs.WithLinkName(logPath),
-		rotatelogs.WithMaxAge(time.Duration(24*7)*time.Hour),
-		rotatelogs.WithRotationTime(time.Duration(4)*time.Hour),
-	)
-	if err != nil {
-		return nil, err
-	}
 
 	handler := &LocalTracing{
+		Logger: logger.NewLogger(logger.WithColor(true), logger.WithLogPath(path.Join(logDir, baseLog))),
 		LogDir: logDir,
-		DebugLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), debugPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		InfoLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), infoPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		WarnLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), warnPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		ErrorLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), errorPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		DPanicLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), dPanicPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		PanicLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), panicPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
-		FatalLogger: zap.New(
-			zapcore.NewTee(
-				zapcore.NewCore(
-					zapcore.NewJSONEncoder(encoderConfig),
-					zapcore.AddSync(writer), fatalPriority,
-				),
-			),
-			zap.AddCaller(),
-		),
 	}
-	localTracing = handler
-	go handler.Sync()
-	return handler, nil
-}
+	go func() {
+		c1 := make(chan os.Signal, 1)
+		signal.Notify(c1, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
-func GetLocalTracing() *LocalTracing {
-	return localTracing
+		// 接受信号同步日志
+		handler.Sync()
+	}()
+	return handler, nil
 }
 
 func (l *LocalTracing) HandlerFunc() gin.HandlerFunc {
@@ -186,13 +69,13 @@ func (l *LocalTracing) HandlerFunc() gin.HandlerFunc {
 				zap.Error(errors.New("crash")),
 				zap.String("status", "Internal Servre Error"),
 			)
-			l.ErrorLogger.Error("request:", fields...)
+			l.Logger.Error("request:", fields...)
 			ctx.String(500, "found error")
 		} else {
 			fields = append(fields,
 				zap.String("status", "Success"),
 			)
-			l.InfoLogger.Info("request:", fields...)
+			l.Info("request:", fields...)
 		}
 	}
 }
@@ -225,20 +108,6 @@ func (l *LocalTracing) LogCallInfo(ctx *gin.Context) (res *zapcore.Field) {
 	}()
 	ctx.Next()
 	return nil
-}
-
-func (l *LocalTracing) Sync() {
-	c1 := make(chan os.Signal, 1)
-	signal.Notify(c1, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-
-	// 接受信号同步日志
-	l.InfoLogger.Sync()
-	l.DebugLogger.Sync()
-	l.WarnLogger.Sync()
-	l.ErrorLogger.Sync()
-	l.DPanicLogger.Sync()
-	l.PanicLogger.Sync()
-	l.FatalLogger.Sync()
 }
 
 // time时间
